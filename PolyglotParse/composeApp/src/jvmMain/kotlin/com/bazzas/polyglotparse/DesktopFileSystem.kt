@@ -34,7 +34,6 @@ class DesktopFileSystem : FileSystem {
             )
         }
 
-        // Java sorting
         Collections.sort(resultList, object : Comparator<FileItem> {
             override fun compare(a: FileItem, b: FileItem): Int {
                 if (a.isDirectory == b.isDirectory) {

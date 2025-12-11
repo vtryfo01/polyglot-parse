@@ -18,7 +18,7 @@ import com.bazzas.polyglotparse.engine.ProjectAnalyzer
 import com.bazzas.polyglotparse.model.CodeNode
 import com.bazzas.polyglotparse.model.LaidOutGraph
 import com.bazzas.polyglotparse.model.CircularLayouter
-import com.bazzas.polyglotparse.model.GraphView   // 🔥 correct import
+import com.bazzas.polyglotparse.model.GraphView
 
 @Composable
 fun App(fileSystem: FileSystem) {
