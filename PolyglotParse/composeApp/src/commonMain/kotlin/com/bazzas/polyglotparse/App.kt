@@ -17,8 +17,12 @@ import com.bazzas.polyglotparse.engine.SimpleAnalyzer
 import com.bazzas.polyglotparse.engine.ProjectAnalyzer
 import com.bazzas.polyglotparse.model.CodeNode
 import com.bazzas.polyglotparse.model.LaidOutGraph
-import com.bazzas.polyglotparse.model.CircularLayouter
+import com.bazzas.polyglotparse.model.KmpLayout3D
 import com.bazzas.polyglotparse.model.GraphView
+import com.bazzas.polyglotparse.model.SourceSet
+import com.bazzas.polyglotparse.ui.GraphControls
+import com.bazzas.polyglotparse.ui.SearchFilterPanel
+import com.bazzas.polyglotparse.ui.NodeDetailsPanel
 
 @Composable
 fun App(fileSystem: FileSystem) {
@@ -27,12 +31,18 @@ fun App(fileSystem: FileSystem) {
         var fileList by remember { mutableStateOf(emptyList<FileItem>()) }
         var selectedNode by remember { mutableStateOf<CodeNode?>(null) }
         var laidOutGraph by remember { mutableStateOf<LaidOutGraph?>(null) }
+        var is3DMode by remember { mutableStateOf(true) }
+
+        // Search and filter state
+        var searchQuery by remember { mutableStateOf("") }
+        var selectedLanguages by remember { mutableStateOf<Set<String>>(emptySet()) }
+        var selectedSourceSets by remember { mutableStateOf<Set<SourceSet>>(emptySet()) }
 
         // per-file analyzer
         val fileAnalyzer = remember { SimpleAnalyzer() }
         // project-level analyzer + layouter
         val projectAnalyzer = remember { ProjectAnalyzer(fileSystem) }
-        val layouter = remember { CircularLayouter() }
+        val layouter = remember { KmpLayout3D() }
 
         val scope = rememberCoroutineScope()
 
@@ -101,7 +111,7 @@ fun App(fileSystem: FileSystem) {
                 Spacer(Modifier.height(8.dp))
 
                 // file list
-                LazyColumn {
+                LazyColumn(modifier = Modifier.weight(1f)) {
                     items(fileList) { file ->
                         Button(
                             onClick = {
@@ -129,6 +139,32 @@ fun App(fileSystem: FileSystem) {
                         }
                     }
                 }
+
+                // Search and filter panel (only show when graph is displayed)
+                if (laidOutGraph != null) {
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    SearchFilterPanel(
+                        nodes = laidOutGraph!!.nodes.map { it.node },
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        selectedLanguages = selectedLanguages,
+                        onLanguageToggle = { lang ->
+                            selectedLanguages = if (selectedLanguages.contains(lang)) {
+                                selectedLanguages - lang
+                            } else {
+                                selectedLanguages + lang
+                            }
+                        },
+                        selectedSourceSets = selectedSourceSets,
+                        onSourceSetToggle = { sourceSet ->
+                            selectedSourceSets = if (selectedSourceSets.contains(sourceSet)) {
+                                selectedSourceSets - sourceSet
+                            } else {
+                                selectedSourceSets + sourceSet
+                            }
+                        }
+                    )
+                }
             }
 
             // RIGHT PANEL
@@ -143,28 +179,88 @@ fun App(fileSystem: FileSystem) {
             ) {
                 when {
                     laidOutGraph != null -> {
-                        Column(
-                            Modifier.fillMaxSize()
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        // Compute filtered node IDs based on search and filters
+                        val graph = laidOutGraph!!
+                        val filteredNodeIds = graph.nodes
+                            .map { it.node }
+                            .filter { node ->
+                                // Apply search filter
+                                val matchesSearch = searchQuery.isEmpty() ||
+                                    node.name.contains(searchQuery, ignoreCase = true)
+
+                                // Apply language filter
+                                val matchesLanguage = selectedLanguages.isEmpty() ||
+                                    selectedLanguages.contains(node.language)
+
+                                // Apply source set filter
+                                val matchesSourceSet = selectedSourceSets.isEmpty() ||
+                                    selectedSourceSets.contains(node.sourceSet)
+
+                                matchesSearch && matchesLanguage && matchesSourceSet
+                            }
+                            .map { it.id }
+                            .toSet()
+
+                        Row(Modifier.fillMaxSize()) {
+                            // Left: Graph view
+                            Column(
+                                Modifier.weight(2f).fillMaxHeight()
                             ) {
-                                Text("Project graph", style = MaterialTheme.typography.titleMedium)
-                                TextButton(onClick = { laidOutGraph = null }) {
-                                    Text("Close")
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Project graph", style = MaterialTheme.typography.titleMedium)
+                                    TextButton(onClick = {
+                                        laidOutGraph = null
+                                        selectedNode = null
+                                        searchQuery = ""
+                                        selectedLanguages = emptySet()
+                                        selectedSourceSets = emptySet()
+                                    }) {
+                                        Text("Close")
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // Graph controls (2D/3D toggle, reset camera)
+                                GraphControls(
+                                    is3DMode = is3DMode,
+                                    onToggle3DMode = { is3DMode = it },
+                                    onResetCamera = {
+                                        // Force re-render by toggling and back
+                                        val current = is3DMode
+                                        is3DMode = !current
+                                        is3DMode = current
+                                    }
+                                )
+
+                                Spacer(Modifier.height(8.dp))
+
+                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                                    GraphView(
+                                        laidOutGraph = graph,
+                                        is3DMode = is3DMode,
+                                        selectedNodeId = selectedNode?.id,
+                                        filteredNodeIds = if (filteredNodeIds.size < graph.nodes.size) filteredNodeIds else null,
+                                        onNodeClick = { node ->
+                                            selectedNode = node
+                                        }
+                                    )
                                 }
                             }
 
-                            Spacer(Modifier.height(8.dp))
-
-                            Box(Modifier.weight(1f).fillMaxWidth()) {
-                                GraphView(
-                                    laidOutGraph = laidOutGraph!!,
-                                    onNodeClick = { node ->
-                                        selectedNode = node
-                                    }
+                            // Right: Node details panel
+                            Divider(modifier = Modifier.width(1.dp).fillMaxHeight())
+                            Column(
+                                Modifier.weight(1f).fillMaxHeight()
+                            ) {
+                                NodeDetailsPanel(
+                                    selectedNode = selectedNode,
+                                    allNodes = graph.nodes.map { it.node },
+                                    edges = graph.edges
                                 )
                             }
                         }

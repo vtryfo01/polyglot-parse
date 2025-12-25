@@ -11,7 +11,7 @@ class ProjectAnalyzer(
 
     suspend fun analyzeProject(rootPath: String): CodeGraph {
         val allFiles = collectFilesRecursively(rootPath)
-            .filter { !it.isDirectory && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }
+            .filter { !it.isDirectory && (it.name.endsWith(".kt") || it.name.endsWith(".java") || it.name.endsWith(".swift")) }
 
         val nodes = mutableListOf<CodeNode>()
         val edges = mutableListOf<CodeEdge>()
@@ -53,6 +53,24 @@ class ProjectAnalyzer(
                         type = EdgeType.DEPENDS_ON
                     )
                 }
+            }
+        }
+
+        // 3) Link expect-actual pairs
+        // Find expect nodes and match them with actual nodes by name
+        val expectNodes = nodes.filter { it.isExpect && it.expectActualName != null }
+        val actualNodes = nodes.filter { it.isActual && it.expectActualName != null }
+
+        for (expectNode in expectNodes) {
+            val matchingActuals = actualNodes.filter {
+                it.expectActualName == expectNode.expectActualName
+            }
+            for (actualNode in matchingActuals) {
+                edges += CodeEdge(
+                    fromId = expectNode.id,
+                    toId = actualNode.id,
+                    type = EdgeType.EXPECT_ACTUAL
+                )
             }
         }
 
