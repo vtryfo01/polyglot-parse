@@ -18,10 +18,13 @@ import com.bazzas.polyglotparse.engine.ProjectAnalyzer
 import com.bazzas.polyglotparse.model.CodeNode
 import com.bazzas.polyglotparse.model.LaidOutGraph
 import com.bazzas.polyglotparse.model.KmpLayout3D
+import com.bazzas.polyglotparse.model.SolarSystemLayout
+import com.bazzas.polyglotparse.model.GraphTheme
 import com.bazzas.polyglotparse.model.GraphView
 import com.bazzas.polyglotparse.model.SourceSet
-import com.bazzas.polyglotparse.ui.GraphControls
-import com.bazzas.polyglotparse.ui.SearchFilterPanel
+import com.bazzas.polyglotparse.ui.CollapsibleDock
+import com.bazzas.polyglotparse.ui.FloatingToolbar
+import com.bazzas.polyglotparse.ui.GraphLegend
 import com.bazzas.polyglotparse.ui.NodeDetailsPanel
 
 @Composable
@@ -32,6 +35,9 @@ fun App(fileSystem: FileSystem) {
         var selectedNode by remember { mutableStateOf<CodeNode?>(null) }
         var laidOutGraph by remember { mutableStateOf<LaidOutGraph?>(null) }
         var is3DMode by remember { mutableStateOf(true) }
+        var isAutoRotate by remember { mutableStateOf(true) }  // Default ON
+        var graphTheme by remember { mutableStateOf(GraphTheme.SOLAR_SYSTEM) }  // Default to Solar System
+        var isDockExpanded by remember { mutableStateOf(true) }  // Dock visibility
 
         // Search and filter state
         var searchQuery by remember { mutableStateOf("") }
@@ -40,9 +46,10 @@ fun App(fileSystem: FileSystem) {
 
         // per-file analyzer
         val fileAnalyzer = remember { SimpleAnalyzer() }
-        // project-level analyzer + layouter
+        // project-level analyzer + layouters
         val projectAnalyzer = remember { ProjectAnalyzer(fileSystem) }
-        val layouter = remember { KmpLayout3D() }
+        val kmpLayouter = remember { KmpLayout3D() }
+        val solarLayouter = remember { SolarSystemLayout() }
 
         val scope = rememberCoroutineScope()
 
@@ -51,252 +58,221 @@ fun App(fileSystem: FileSystem) {
             fileList = fileSystem.getFiles(currentPath)
         }
 
-        Row(Modifier.fillMaxSize()) {
-
-            // LEFT PANEL
-            Column(Modifier.weight(1f).padding(16.dp)) {
-
-                // path + "Analyze project" button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Only show "Up" if we're not at the starting path
-                        if (currentPath != fileSystem.startPath) {
-                            TextButton(
-                                onClick = {
-                                    val trimmed = currentPath.trimEnd('/', '\\')
-                                    val index = trimmed.lastIndexOfAny(charArrayOf('/', '\\'))
-
-                                    val parent = if (index > 0) {
-                                        trimmed.substring(0, index)
-                                    } else {
-                                        trimmed
-                                    }
-
-                                    if (parent.isNotBlank() && parent != currentPath) {
-                                        currentPath = parent
-                                        selectedNode = null
-                                        laidOutGraph = null
-                                    }
-                                }
-                            ) {
-                                Text("⬆ Up")
-                            }
+        // NEW LAYOUT: Graph-first design with collapsible dock
+        Box(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxSize()) {
+                // LEFT: Collapsible Dock
+                CollapsibleDock(
+                    isExpanded = isDockExpanded,
+                    onToggle = { isDockExpanded = !isDockExpanded },
+                    currentPath = currentPath,
+                    fileList = fileList,
+                    onNavigateUp = {
+                        val trimmed = currentPath.trimEnd('/', '\\')
+                        val index = trimmed.lastIndexOfAny(charArrayOf('/', '\\'))
+                        val parent = if (index > 0) {
+                            trimmed.substring(0, index)
+                        } else {
+                            trimmed
                         }
-
-
-                        Text(
-                            text = "📂 $currentPath",
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                    }
-
-                    Button(
-                        onClick = {
+                        if (parent.isNotBlank() && parent != currentPath) {
+                            currentPath = parent
+                            selectedNode = null
+                            laidOutGraph = null
+                        }
+                    },
+                    onFileClick = { file ->
+                        if (file.isDirectory) {
+                            currentPath = file.path
+                            selectedNode = null
+                            laidOutGraph = null
+                        } else {
                             scope.launch {
-                                val graph = projectAnalyzer.analyzeProject(currentPath)
-                                laidOutGraph = layouter.layout(graph)
-                                selectedNode = null   // graph mode
+                                val content = fileSystem.readFile(file.path)
+                                selectedNode = fileAnalyzer.analyze(content, file.path, file.name)
+                                laidOutGraph = null
                             }
                         }
-                    ) {
-                        Text("Analyze project")
-                    }
-                }
-
-
-                Spacer(Modifier.height(8.dp))
-
-                // file list
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(fileList) { file ->
-                        Button(
-                            onClick = {
-                                if (file.isDirectory) {
-                                    currentPath = file.path
-                                    selectedNode = null
-                                    laidOutGraph = null
-                                } else {
-                                    scope.launch {
-                                        val content = fileSystem.readFile(file.path)
-                                        selectedNode = fileAnalyzer.analyze(
-                                            content,
-                                            file.path,
-                                            file.name
-                                        )
-                                        laidOutGraph = null   // file mode
-                                    }
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp)
-                        ) {
-                            Text(if (file.isDirectory) "📁 ${file.name}" else "📄 ${file.name}")
-                        }
-                    }
-                }
-
-                // Search and filter panel (only show when graph is displayed)
-                if (laidOutGraph != null) {
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    SearchFilterPanel(
-                        nodes = laidOutGraph!!.nodes.map { it.node },
-                        searchQuery = searchQuery,
-                        onSearchQueryChange = { searchQuery = it },
-                        selectedLanguages = selectedLanguages,
-                        onLanguageToggle = { lang ->
-                            selectedLanguages = if (selectedLanguages.contains(lang)) {
-                                selectedLanguages - lang
+                    },
+                    onAnalyzeProject = {
+                        scope.launch {
+                            val graph = projectAnalyzer.analyzeProject(currentPath)
+                            laidOutGraph = if (graphTheme == GraphTheme.SOLAR_SYSTEM) {
+                                solarLayouter.layout(graph)
                             } else {
-                                selectedLanguages + lang
+                                kmpLayouter.layout(graph)
                             }
-                        },
-                        selectedSourceSets = selectedSourceSets,
-                        onSourceSetToggle = { sourceSet ->
-                            selectedSourceSets = if (selectedSourceSets.contains(sourceSet)) {
-                                selectedSourceSets - sourceSet
-                            } else {
-                                selectedSourceSets + sourceSet
-                            }
+                            selectedNode = null
                         }
-                    )
-                }
-            }
+                    },
+                    onLoadDemo = null,  // TODO: Implement demo mode
+                    nodes = laidOutGraph?.nodes?.map { it.node } ?: emptyList(),
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    selectedLanguages = selectedLanguages,
+                    onLanguageToggle = { lang ->
+                        selectedLanguages = if (selectedLanguages.contains(lang)) {
+                            selectedLanguages - lang
+                        } else {
+                            selectedLanguages + lang
+                        }
+                    },
+                    selectedSourceSets = selectedSourceSets,
+                    onSourceSetToggle = { sourceSet ->
+                        selectedSourceSets = if (selectedSourceSets.contains(sourceSet)) {
+                            selectedSourceSets - sourceSet
+                        } else {
+                            selectedSourceSets + sourceSet
+                        }
+                    },
+                    showSearchFilters = laidOutGraph != null
+                )
 
-            // RIGHT PANEL
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                when {
-                    laidOutGraph != null -> {
-                        // Compute filtered node IDs based on search and filters
-                        val graph = laidOutGraph!!
-                        val filteredNodeIds = graph.nodes
-                            .map { it.node }
-                            .filter { node ->
-                                // Apply search filter
-                                val matchesSearch = searchQuery.isEmpty() ||
-                                    node.name.contains(searchQuery, ignoreCase = true)
+                // CENTER + RIGHT: Graph Canvas and Details Drawer
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    when {
+                        laidOutGraph != null -> {
+                            // Graph is loaded: show graph with overlays
+                            val graph = laidOutGraph!!
 
-                                // Apply language filter
-                                val matchesLanguage = selectedLanguages.isEmpty() ||
-                                    selectedLanguages.contains(node.language)
-
-                                // Apply source set filter
-                                val matchesSourceSet = selectedSourceSets.isEmpty() ||
-                                    selectedSourceSets.contains(node.sourceSet)
-
-                                matchesSearch && matchesLanguage && matchesSourceSet
-                            }
-                            .map { it.id }
-                            .toSet()
-
-                        Row(Modifier.fillMaxSize()) {
-                            // Left: Graph view
-                            Column(
-                                Modifier.weight(2f).fillMaxHeight()
-                            ) {
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("Project graph", style = MaterialTheme.typography.titleMedium)
-                                    TextButton(onClick = {
-                                        laidOutGraph = null
-                                        selectedNode = null
-                                        searchQuery = ""
-                                        selectedLanguages = emptySet()
-                                        selectedSourceSets = emptySet()
-                                    }) {
-                                        Text("Close")
-                                    }
+                            // Compute filtered node IDs
+                            val filteredNodeIds = graph.nodes
+                                .map { it.node }
+                                .filter { node ->
+                                    val matchesSearch = searchQuery.isEmpty() ||
+                                        node.name.contains(searchQuery, ignoreCase = true)
+                                    val matchesLanguage = selectedLanguages.isEmpty() ||
+                                        selectedLanguages.contains(node.language)
+                                    val matchesSourceSet = selectedSourceSets.isEmpty() ||
+                                        selectedSourceSets.contains(node.sourceSet)
+                                    matchesSearch && matchesLanguage && matchesSourceSet
                                 }
+                                .map { it.id }
+                                .toSet()
 
-                                Spacer(Modifier.height(8.dp))
-
-                                // Graph controls (2D/3D toggle, reset camera)
-                                GraphControls(
-                                    is3DMode = is3DMode,
-                                    onToggle3DMode = { is3DMode = it },
-                                    onResetCamera = {
-                                        // Force re-render by toggling and back
-                                        val current = is3DMode
-                                        is3DMode = !current
-                                        is3DMode = current
-                                    }
-                                )
-
-                                Spacer(Modifier.height(8.dp))
-
-                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                            Row(Modifier.fillMaxSize()) {
+                                // Graph Canvas
+                                Box(Modifier.weight(if (selectedNode != null) 2f else 1f).fillMaxHeight()) {
                                     GraphView(
                                         laidOutGraph = graph,
                                         is3DMode = is3DMode,
+                                        isAutoRotate = isAutoRotate,
+                                        graphTheme = graphTheme,
                                         selectedNodeId = selectedNode?.id,
                                         filteredNodeIds = if (filteredNodeIds.size < graph.nodes.size) filteredNodeIds else null,
-                                        onNodeClick = { node ->
-                                            selectedNode = node
-                                        }
+                                        onNodeClick = { node -> selectedNode = node }
+                                    )
+
+                                    // Floating toolbar overlay (top-left)
+                                    FloatingToolbar(
+                                        is3DMode = is3DMode,
+                                        isAutoRotate = isAutoRotate,
+                                        graphTheme = graphTheme,
+                                        onToggle3DMode = { is3DMode = it },
+                                        onToggleAutoRotate = { isAutoRotate = it },
+                                        onToggleTheme = { theme ->
+                                            graphTheme = theme
+                                            scope.launch {
+                                                val newGraph = projectAnalyzer.analyzeProject(currentPath)
+                                                laidOutGraph = if (theme == GraphTheme.SOLAR_SYSTEM) {
+                                                    solarLayouter.layout(newGraph)
+                                                } else {
+                                                    kmpLayouter.layout(newGraph)
+                                                }
+                                            }
+                                        },
+                                        onResetCamera = {
+                                            val current = is3DMode
+                                            is3DMode = !current
+                                            is3DMode = current
+                                        },
+                                        modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+                                    )
+
+                                    // Legend overlay (bottom-right)
+                                    GraphLegend(
+                                        graphTheme = graphTheme,
+                                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
                                     )
                                 }
-                            }
 
-                            // Right: Node details panel
-                            Divider(modifier = Modifier.width(1.dp).fillMaxHeight())
-                            Column(
-                                Modifier.weight(1f).fillMaxHeight()
+                                // Details Drawer (only when node selected)
+                                if (selectedNode != null) {
+                                    Divider(modifier = Modifier.width(1.dp).fillMaxHeight())
+                                    Box(
+                                        Modifier.width(320.dp).fillMaxHeight()
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .padding(16.dp)
+                                    ) {
+                                        Column {
+                                            Row(
+                                                Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("Node Details", style = MaterialTheme.typography.titleMedium)
+                                                IconButton(onClick = { selectedNode = null }) {
+                                                    Text("✕")
+                                                }
+                                            }
+                                            Spacer(Modifier.height(8.dp))
+                                            NodeDetailsPanel(
+                                                selectedNode = selectedNode,
+                                                allNodes = graph.nodes.map { it.node },
+                                                edges = graph.edges
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        selectedNode != null -> {
+                            // File analysis mode (no graph)
+                            Box(
+                                Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
                             ) {
-                                NodeDetailsPanel(
-                                    selectedNode = selectedNode,
-                                    allNodes = graph.nodes.map { it.node },
-                                    edges = graph.edges
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(32.dp)
+                                ) {
+                                    val node = selectedNode!!
+                                    Text("File Analysis", style = MaterialTheme.typography.headlineMedium)
+                                    Spacer(Modifier.height(16.dp))
+                                    Text("File: ${node.name}", style = MaterialTheme.typography.titleLarge)
+                                    Text("Language: ${node.language}")
+                                    Text("Lines of Code: ${node.linesOfCode}")
+                                    Spacer(Modifier.height(16.dp))
+                                    val color = if (node.complexity > 5) Color.Red else Color(0xFF00AA00)
+                                    Text(
+                                        "Complexity: ${node.complexity}",
+                                        color = color,
+                                        style = MaterialTheme.typography.headlineLarge
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    if (node.complexity > 5) {
+                                        Text("⚠️ High Complexity detected!", color = Color.Red)
+                                    } else {
+                                        Text("✅ Simple and clean.", color = Color(0xFF00AA00))
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> {
+                            // Empty state
+                            Box(
+                                Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Click 'Analyze' to visualize project structure",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color.Gray
                                 )
                             }
                         }
-                    }
-
-
-                    // otherwise show file analysis
-                    selectedNode != null -> {
-                        val node = selectedNode!!
-                        Text("Analysis Result", style = MaterialTheme.typography.headlineMedium)
-                        Spacer(Modifier.height(16.dp))
-
-                        Text("File: ${node.name}", style = MaterialTheme.typography.titleLarge)
-                        Text("Language: ${node.language}")
-                        Text("Lines of Code: ${node.linesOfCode}")
-
-                        Spacer(Modifier.height(16.dp))
-
-                        val color =
-                            if (node.complexity > 5) Color.Red else Color(0xFF00AA00)
-                        Text(
-                            "Complexity: ${node.complexity}",
-                            color = color,
-                            style = MaterialTheme.typography.headlineLarge
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-                        if (node.complexity > 5) {
-                            Text("⚠️ High Complexity detected!", color = Color.Red)
-                        } else {
-                            Text("✅ Simple and clean.", color = Color(0xFF00AA00))
-                        }
-                    }
-
-                    else -> {
-                        Text("Click a file or run Analyze project")
                     }
                 }
             }

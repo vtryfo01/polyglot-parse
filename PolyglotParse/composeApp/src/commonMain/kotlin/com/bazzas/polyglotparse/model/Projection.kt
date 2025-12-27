@@ -21,8 +21,8 @@ fun perspectiveProject(
 ): List<ProjectedNode> {
     if (nodes.isEmpty()) return emptyList()
 
-    val focalLength = 600f  // Controls perspective strength
-    val cameraDistance = 800f  // How far back the camera sits
+    val focalLength = 1200f  // STRONG perspective for dramatic 3D effect
+    val cameraDistance = 700f  // Camera distance for optimal depth perception
 
     val projected = nodes.map { pn ->
         var x = pn.x
@@ -42,30 +42,32 @@ fun perspectiveProject(
         val yRotX = y * cosPitch - zRotY * sinPitch
         val zRotX = y * sinPitch + zRotY * cosPitch
 
-        // 2. Apply camera pan
-        val xPanned = xRotY + camera.panX
-        val yPanned = yRotX + camera.panY
+        // 2. Apply camera pan (clamped)
+        val maxPan = 200f
+        val xPanned = xRotY + camera.panX.coerceIn(-maxPan, maxPan)
+        val yPanned = yRotX + camera.panY.coerceIn(-maxPan, maxPan)
 
         // 3. Calculate depth (z after rotation + camera distance)
+        // NO huge constant offsets - let the natural z-range shine through
         val depth = zRotX + cameraDistance
 
-        // 4. Perspective projection
+        // 4. Perspective projection with strong falloff
         // Prevent division by zero or negative depth
-        val safeDepth = if (depth > 10f) depth else 10f
+        val safeDepth = if (depth > 50f) depth else 50f
 
         val screenX = (xPanned * focalLength) / safeDepth
         val screenY = (yPanned * focalLength) / safeDepth
 
-        // 5. Calculate apparent size based on depth (closer = bigger)
-        // Size scales from 0.5x (far) to 1.5x (close)
-        val apparentSize = (focalLength / safeDepth) * camera.zoom * 1.2f
+        // 5. Calculate apparent size based on depth (closer = DRAMATICALLY bigger)
+        // EXTREME scaling for undeniable 3D: near nodes 5x bigger, far nodes microscopic
+        val apparentSize = (focalLength / safeDepth) * camera.zoom * 2.5f
 
         ProjectedNode(
             node = pn.node,
             screenX = screenX,
             screenY = screenY,
             depth = depth,
-            apparentSize = apparentSize.coerceIn(0.3f, 2.5f)
+            apparentSize = apparentSize.coerceIn(0.15f, 5.0f)  // EXTREME range for WOW factor
         )
     }
 

@@ -10,8 +10,11 @@ class ProjectAnalyzer(
 ) {
 
     suspend fun analyzeProject(rootPath: String): CodeGraph {
+        // Collect ALL files, filter out binaries, cap at 2000 nodes for performance
         val allFiles = collectFilesRecursively(rootPath)
-            .filter { !it.isDirectory && (it.name.endsWith(".kt") || it.name.endsWith(".java") || it.name.endsWith(".swift")) }
+            .filter { !it.isDirectory }
+            .filter { !simpleAnalyzer.isBinary(it.name) }  // Exclude binary files
+            .take(2000)  // Cap at 2000 nodes to prevent performance issues
 
         val nodes = mutableListOf<CodeNode>()
         val edges = mutableListOf<CodeEdge>()

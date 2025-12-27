@@ -1,3 +1,4 @@
+
 package com.bazzas.polyglotparse
 
 interface Platform {
